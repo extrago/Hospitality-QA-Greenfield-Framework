@@ -7,7 +7,7 @@
 
 <br/>
 
-[![CI Status](https://github.com/your-org/hospitality-qa-greenfield-framework/actions/workflows/main-ci.yml/badge.svg?branch=main)](https://github.com/your-org/hospitality-qa-greenfield-framework/actions)
+[![CI Status](https://github.com/extrago/Hospitality-QA-Greenfield-Framework/actions/workflows/main-ci.yml/badge.svg?branch=main)](https://github.com/extrago/Hospitality-QA-Greenfield-Framework/actions)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Playwright](https://img.shields.io/badge/Playwright-1.49-2EAD33?logo=playwright&logoColor=white)](https://playwright.dev/)
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
