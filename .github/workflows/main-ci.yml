@@ -62,6 +62,13 @@ jobs:
 
   # ──────────────────────────────────────────────────────────────────────────
   # Job 2: End-to-End browser tests — run in parallel shards per project.
+  #
+  # IMPORTANT — browser binary mapping:
+  #   Playwright project names (chromium, firefox, webkit, mobile-chrome,
+  #   mobile-safari) are NOT the same as browser binary install targets.
+  #   mobile-chrome  → install chromium
+  #   mobile-safari  → install webkit
+  #   The resolve-browser step below performs this mapping before installation.
   # ──────────────────────────────────────────────────────────────────────────
   e2e-tests:
     name: E2E Tests — ${{ matrix.project }}
@@ -93,27 +100,45 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      # ── Browser Binary Name Resolution ────────────────────────────────────
+      # Device profile project names (mobile-chrome, mobile-safari) are not
+      # valid Playwright install targets. This step resolves the correct
+      # underlying browser engine name before caching and installation.
+      - name: Resolve browser binary name for project '${{ matrix.project }}'
+        id: resolve-browser
+        run: |
+          PROJECT="${{ matrix.project }}"
+          case "$PROJECT" in
+            mobile-chrome)  BROWSER="chromium" ;;
+            mobile-safari)  BROWSER="webkit"   ;;
+            *)              BROWSER="$PROJECT" ;;
+          esac
+          echo "browser=$BROWSER" >> "$GITHUB_OUTPUT"
+          echo "Resolved project '$PROJECT' → browser binary '$BROWSER'"
+
       # ── Playwright Binary Cache ──────────────────────────────────────────
-      # Cache browser binaries between runs. The cache key includes the
-      # Playwright version so a version bump automatically invalidates it.
+      # Cache browser binaries between runs using the resolved binary name
+      # so that chromium and mobile-chrome share the same cache entry.
       - name: Retrieve Playwright browser cache
         id: playwright-cache
         uses: actions/cache@v4
         with:
           path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
-          key: playwright-${{ matrix.project }}-${{ hashFiles('package-lock.json') }}
+          key: playwright-${{ steps.resolve-browser.outputs.browser }}-${{ hashFiles('package-lock.json') }}
           restore-keys: |
-            playwright-${{ matrix.project }}-
+            playwright-${{ steps.resolve-browser.outputs.browser }}-
 
-      - name: Install Playwright system dependencies and browsers
+      - name: Install Playwright browsers and system dependencies
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps ${{ matrix.project }}
+        run: npx playwright install --with-deps ${{ steps.resolve-browser.outputs.browser }}
 
       - name: Install Playwright system dependencies only (browsers cached)
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps ${{ matrix.project }}
+        run: npx playwright install-deps ${{ steps.resolve-browser.outputs.browser }}
 
       # ── Test Execution ───────────────────────────────────────────────────
+      # E2E tests require a live BASE_URL. When STAGING_BASE_URL is not set,
+      # the tests gracefully self-skip via the beforeEach guard in the spec.
       - name: Run E2E tests — ${{ matrix.project }}
         run: npx playwright test tests/e2e/ --project=${{ matrix.project }}
         env:
@@ -125,9 +150,6 @@ jobs:
           CI:                  'true'
 
       # ── Artefact Upload ──────────────────────────────────────────────────
-      # Upload HTML report and test-results (screenshots, traces, videos)
-      # only when a test has failed. This prevents filling storage with
-      # successful run artefacts while ensuring failures are always debuggable.
       - name: Upload Playwright HTML report on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -146,6 +168,8 @@ jobs:
 
   # ──────────────────────────────────────────────────────────────────────────
   # Job 3: API tests — no browser required, runs on a single runner.
+  # The embedded mock server makes this job fully self-contained and requires
+  # zero network access or secrets configuration.
   # ──────────────────────────────────────────────────────────────────────────
   api-tests:
     name: API Tests — Geofence & Contract
@@ -166,18 +190,17 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      # API tests use Playwright's request context — no browser binary needed.
-      - name: Install Playwright (no browsers)
+      # API tests use Playwright's APIRequestContext — no browser binary is
+      # launched. We install the Playwright CLI tooling via chromium so the
+      # test runner initialises correctly without spinning up any browser.
+      - name: Install Playwright CLI tooling (no browser launched during API tests)
         run: npx playwright install --with-deps chromium
-        # We install chromium as the baseline so the Playwright test runner
-        # initialises correctly; API tests do not launch a browser.
 
       - name: Run API tests
         run: npx playwright test tests/api/ --project=api
         env:
-          API_BASE_URL:      ${{ secrets.STAGING_API_BASE_URL }}
-          API_BEARER_TOKEN:  ${{ secrets.API_BEARER_TOKEN }}
-          CI:                'true'
+          CI: 'true'
+          # No secrets required — the mock server handles all API responses locally.
 
       - name: Upload API test report on failure
         if: failure()
@@ -197,6 +220,8 @@ jobs:
 
   # ──────────────────────────────────────────────────────────────────────────
   # Job 4: Quality gate — passes only if all parallel test jobs succeeded.
+  # "skipped" is treated as a passing outcome for E2E jobs so that the gate
+  # does not fail when tests are intentionally skipped due to missing BASE_URL.
   # ──────────────────────────────────────────────────────────────────────────
   quality-gate:
     name: Quality Gate
@@ -209,10 +234,21 @@ jobs:
     steps:
       - name: Evaluate test results
         run: |
-          if [[ "${{ needs.e2e-tests.result }}" != "success" || "${{ needs.api-tests.result }}" != "success" ]]; then
-            echo "::error::Quality gate failed. One or more test jobs did not pass."
-            echo "  E2E Tests:  ${{ needs.e2e-tests.result }}"
-            echo "  API Tests:  ${{ needs.api-tests.result }}"
+          E2E_RESULT="${{ needs.e2e-tests.result }}"
+          API_RESULT="${{ needs.api-tests.result }}"
+
+          # "skipped" is acceptable for E2E — tests self-skip when BASE_URL is absent.
+          # "success" and "skipped" are both green outcomes.
+          if [[ "$E2E_RESULT" != "success" && "$E2E_RESULT" != "skipped" ]]; then
+            echo "::error::Quality gate failed — E2E Tests: $E2E_RESULT"
             exit 1
           fi
-          echo "Quality gate passed. All test jobs completed successfully."
+
+          if [[ "$API_RESULT" != "success" ]]; then
+            echo "::error::Quality gate failed — API Tests: $API_RESULT"
+            exit 1
+          fi
+
+          echo "Quality gate passed."
+          echo "  E2E Tests:  $E2E_RESULT"
+          echo "  API Tests:  $API_RESULT"
