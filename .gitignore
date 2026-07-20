@@ -1,0 +1,25 @@
+# ─── Runtime Artifacts ───────────────────────────────────────────────────────
+node_modules/
+dist/
+playwright-report/
+test-results/
+.playwright/
+
+# ─── Environment Secrets ─────────────────────────────────────────────────────
+# Never commit the real .env file containing secrets.
+.env
+
+# ─── Operating System ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── IDE & Editor ────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.suo
+*.swp
+
+# ─── Logs ────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*

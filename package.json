@@ -1,0 +1,37 @@
+{
+  "name": "hospitality-qa-greenfield-framework",
+  "version": "1.0.0",
+  "description": "Production-grade QA automation framework for the award-winning digital hospitality platform.",
+  "author": "QA Automation Team",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "test": "playwright test",
+    "test:e2e": "playwright test tests/e2e/",
+    "test:api": "playwright test tests/api/",
+    "test:chromium": "playwright test --project=chromium",
+    "test:firefox": "playwright test --project=firefox",
+    "test:webkit": "playwright test --project=webkit",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report playwright-report",
+    "triage": "ts-node support-tools/ai-ticket-triage.ts",
+    "lint": "tsc --noEmit",
+    "install:browsers": "playwright install --with-deps"
+  },
+  "dependencies": {
+    "axios": "^1.7.9"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "@types/node": "^22.10.6",
+    "dotenv": "^17.4.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}

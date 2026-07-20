@@ -1,0 +1,218 @@
+name: CI — QA Automation Framework
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+  pull_request:
+    branches:
+      - main
+      - 'release/**'
+  # Allow manual trigger from the GitHub Actions UI.
+  workflow_dispatch:
+    inputs:
+      browser:
+        description: 'Target browser project (leave empty to run all)'
+        required: false
+        default: ''
+        type: choice
+        options:
+          - ''
+          - chromium
+          - firefox
+          - webkit
+          - api
+
+# Cancel any in-progress run for the same branch to conserve runner minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Node.js version pinned for reproducibility across all jobs.
+  NODE_VERSION: '20'
+  # Playwright stores browser binaries in a cache directory.
+  PLAYWRIGHT_BROWSERS_PATH: '~/.cache/playwright'
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 1: Lint & type-check — fast feedback without spinning up browsers.
+  # ──────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run TypeScript compiler (type-check only, no emit)
+        run: npm run lint
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 2: End-to-End browser tests — run in parallel shards per project.
+  # ──────────────────────────────────────────────────────────────────────────
+  e2e-tests:
+    name: E2E Tests — ${{ matrix.project }}
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      # Do not cancel sibling matrix jobs when one fails — collect all results.
+      fail-fast: false
+      matrix:
+        project:
+          - chromium
+          - firefox
+          - webkit
+          - mobile-chrome
+          - mobile-safari
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # ── Playwright Binary Cache ──────────────────────────────────────────
+      # Cache browser binaries between runs. The cache key includes the
+      # Playwright version so a version bump automatically invalidates it.
+      - name: Retrieve Playwright browser cache
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: playwright-${{ matrix.project }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ matrix.project }}-
+
+      - name: Install Playwright system dependencies and browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps ${{ matrix.project }}
+
+      - name: Install Playwright system dependencies only (browsers cached)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps ${{ matrix.project }}
+
+      # ── Test Execution ───────────────────────────────────────────────────
+      - name: Run E2E tests — ${{ matrix.project }}
+        run: npx playwright test tests/e2e/ --project=${{ matrix.project }}
+        env:
+          BASE_URL:            ${{ secrets.STAGING_BASE_URL }}
+          API_BASE_URL:        ${{ secrets.STAGING_API_BASE_URL }}
+          TEST_USER_EMAIL:     ${{ secrets.TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD:  ${{ secrets.TEST_USER_PASSWORD }}
+          API_BEARER_TOKEN:    ${{ secrets.API_BEARER_TOKEN }}
+          CI:                  'true'
+
+      # ── Artefact Upload ──────────────────────────────────────────────────
+      # Upload HTML report and test-results (screenshots, traces, videos)
+      # only when a test has failed. This prevents filling storage with
+      # successful run artefacts while ensuring failures are always debuggable.
+      - name: Upload Playwright HTML report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.project }}-${{ github.run_id }}
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Upload test result artefacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.project }}-${{ github.run_id }}
+          path: test-results/
+          retention-days: 14
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 3: API tests — no browser required, runs on a single runner.
+  # ──────────────────────────────────────────────────────────────────────────
+  api-tests:
+    name: API Tests — Geofence & Contract
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # API tests use Playwright's request context — no browser binary needed.
+      - name: Install Playwright (no browsers)
+        run: npx playwright install --with-deps chromium
+        # We install chromium as the baseline so the Playwright test runner
+        # initialises correctly; API tests do not launch a browser.
+
+      - name: Run API tests
+        run: npx playwright test tests/api/ --project=api
+        env:
+          API_BASE_URL:      ${{ secrets.STAGING_API_BASE_URL }}
+          API_BEARER_TOKEN:  ${{ secrets.API_BEARER_TOKEN }}
+          CI:                'true'
+
+      - name: Upload API test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-test-report-${{ github.run_id }}
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Upload API JUnit XML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-junit-results-${{ github.run_id }}
+          path: test-results/junit-results.xml
+          retention-days: 30
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 4: Quality gate — passes only if all parallel test jobs succeeded.
+  # ──────────────────────────────────────────────────────────────────────────
+  quality-gate:
+    name: Quality Gate
+    needs:
+      - e2e-tests
+      - api-tests
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Evaluate test results
+        run: |
+          if [[ "${{ needs.e2e-tests.result }}" != "success" || "${{ needs.api-tests.result }}" != "success" ]]; then
+            echo "::error::Quality gate failed. One or more test jobs did not pass."
+            echo "  E2E Tests:  ${{ needs.e2e-tests.result }}"
+            echo "  API Tests:  ${{ needs.api-tests.result }}"
+            exit 1
+          fi
+          echo "Quality gate passed. All test jobs completed successfully."

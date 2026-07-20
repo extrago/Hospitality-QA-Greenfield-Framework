@@ -1,0 +1,50 @@
+TICKET ID: SUP-2847
+CREATED AT: 2026-07-19T11:34:00Z
+PRIORITY: P1 - Critical
+ENVIRONMENT: Production
+PLATFORM: Web (Chrome 126, Windows 11)
+REPORTED BY: Marcus Calloway (Enterprise Client – Atoll Resorts Group)
+ASSIGNED TO: L2 Support – Digital Hospitality Platform
+
+--- SUBJECT ---
+Booking confirmation page fails to load after payment – users stuck in a redirect loop
+
+--- DESCRIPTION ---
+Since approximately 10:45 AM UTC today, multiple users under the Atoll Resorts Group enterprise account have reported that after entering payment details and clicking "Confirm Booking", they are redirected to a blank white page. The browser URL changes to /confirmation?ref= but the reference number is empty and the page content never loads. Some users have reported the page enters a redirect loop between /checkout and /confirmation before eventually timing out with a generic browser error.
+
+This issue is affecting all three of our properties: Atoll Maldives, Atoll Bali, and Atoll Phuket.
+
+We have confirmed this does NOT occur on Firefox but IS reproducible on Chrome (latest) and Edge.
+
+Affected users: 47 confirmed, likely more.
+Revenue impact: Estimated USD $92,000 in lost or incomplete bookings.
+
+--- STEPS TO REPRODUCE ---
+1. Navigate to https://app.hospitality-platform.com
+2. Search for any hotel with a check-in date of 2026-09-01 or later.
+3. Select any available room and proceed to checkout.
+4. Fill in guest details and payment information using any valid card (Visa 4111 1111 1111 1111 tested).
+5. Click "Confirm Booking".
+6. Observe: Browser URL changes to /confirmation?ref= (no reference ID appended).
+7. Observe: Page displays blank white screen or enters a redirect loop.
+
+--- OBSERVED BEHAVIOR ---
+- URL becomes /confirmation?ref= with an empty `ref` parameter.
+- Page content does not render.
+- Chrome DevTools Network tab shows a 302 redirect from /confirmation back to /checkout repeatedly.
+- JavaScript console shows: "Uncaught TypeError: Cannot read properties of undefined (reading 'bookingReference')"
+
+--- EXPECTED BEHAVIOR ---
+- URL should be /confirmation?ref=<BOOKING_REFERENCE_ID>
+- Confirmation page should render with booking details, guest name, check-in/out dates, and a receipt download button.
+
+--- ATTACHMENTS ---
+- chrome-network-har.har (Network trace showing redirect loop)
+- console-errors.txt (Browser console output)
+- screenshot-blank-confirmation.png
+
+--- ADDITIONAL CONTEXT ---
+- Issue started after the deployment at 10:30 AM UTC (deploy tag: v2.14.3).
+- No issue found with bookings placed before the deployment window.
+- Our internal test account (qa.automation@hospitality-platform.com) can also reproduce this.
+- We attempted clearing cache, incognito mode, and a different network – all result in the same behavior on Chrome/Edge.
